@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AR Hit-Test — Размещение объекта</title>
+
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js" } }
+  </script>
+
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; background: #1a1a2e; }
+    #launch {
+      position: fixed; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      padding: 16px 36px; font-size: 18px;
+      border: none; border-radius: 12px; cursor: pointer;
+      background: linear-gradient(135deg, #0abde3, #10ac84);
+      color: #fff; z-index: 10;
+    }
+    #launch:active { opacity: .7; }
+    #hint {
+      display: none; position: fixed; bottom: 24px;
+      left: 50%; transform: translateX(-50%);
+      padding: 10px 20px; border-radius: 8px;
+      background: rgba(0,0,0,.65); color: #fff;
+      font-size: 14px; z-index: 10;
+    }
+  </style>
+</head>
+
+<body>
+  <button id="launch">Начать AR-сессию</button>
+  <div id="hint">Наведите камеру на плоскость и нажмите на экран</div>
+
+  <script type="module">
+    import * as THREE from 'three';
+
+    const scene    = new THREE.Scene();
+    const camera   = new THREE.PerspectiveCamera(
+                       70, innerWidth / innerHeight, 0.02, 30);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(devicePixelRatio);
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.xr.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    const hemiLight = new THREE.HemisphereLight(0xffeedd, 0x8888aa, 2.5);
+    scene.add(hemiLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    dirLight.position.set(3, 5, 2);
+    scene.add(dirLight);
+
+    const markerGeom = new THREE.RingGeometry(0.06, 0.09, 48)
+                          .rotateX(-Math.PI / 2);
+    const markerMat  = new THREE.MeshBasicMaterial({
+                          color: 0x44ddaa, side: THREE.DoubleSide });
+    const marker = new THREE.Mesh(markerGeom, markerMat);
+    marker.matrixAutoUpdate = false;
+    marker.visible = false;
+    scene.add(marker);
+
+    const boxGeom = new THREE.BoxGeometry(0.18, 0.18, 0.18, 2, 2, 2)
+                       .translate(0, 0.09, 0);
+    const boxMat  = new THREE.MeshStandardMaterial({
+                       color: 0xe85d3a,
+                       roughness: 0.45,
+                       metalness: 0.25 });
+    const placedObj = new THREE.Mesh(boxGeom, boxMat);
+    placedObj.visible = false;
+    scene.add(placedObj);
+
+    let hitSource    = null;
+    let objectPlaced = false;
+
+    const btnLaunch = document.getElementById('launch');
+    const hintBar   = document.getElementById('hint');
+
+    btnLaunch.addEventListener('click', async () => {
+
+      if (!navigator.xr ||
+          !(await navigator.xr.isSessionSupported('immersive-ar'))) {
+        alert('WebXR AR не поддерживается на этом устройстве.\n'
+            + 'Попробуйте Chrome на Android или WebXR Emulator.');
+        return;
+      }
+
+      const xrSession = await navigator.xr.requestSession('immersive-ar', {
+        requiredFeatures: ['hit-test'],
+        optionalFeatures: ['local-floor']
+      });
+      await renderer.xr.setSession(xrSession);
+
+      btnLaunch.style.display = 'none';
+      hintBar.style.display   = 'block';
+
+      const viewerRef = await xrSession.requestReferenceSpace('viewer');
+      hitSource = await xrSession.requestHitTestSource({ space: viewerRef });
+
+      xrSession.addEventListener('select', () => {
+        if (!marker.visible) return;
+        placedObj.position.setFromMatrixPosition(marker.matrix);
+        placedObj.quaternion.setFromRotationMatrix(marker.matrix);
+        placedObj.visible = true;
+        objectPlaced = true;
+        hintBar.textContent = 'Объект размещён ✓';
+      });
+
+      xrSession.addEventListener('end', () => {
+        hitSource    = null;
+        objectPlaced = false;
+        marker.visible   = false;
+        placedObj.visible = false;
+        btnLaunch.style.display  = 'block';
+        hintBar.style.display    = 'none';
+        hintBar.textContent = 'Наведите камеру на плоскость и нажмите на экран';
+      });
+    });
+
+    renderer.setAnimationLoop((timestamp, xrFrame) => {
+      if (xrFrame && hitSource) {
+        const hitResults = xrFrame.getHitTestResults(hitSource);
+        if (hitResults.length) {
+          const hitPose = hitResults[0].getPose(
+                            renderer.xr.getReferenceSpace());
+          marker.matrix.fromArray(hitPose.transform.matrix);
+          marker.visible = true;
+        } else {
+          marker.visible = false;
+        }
+      }
+      renderer.render(scene, camera);
+    });
+  </script>
+</body>
+</html>
